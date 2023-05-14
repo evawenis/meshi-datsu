@@ -15,9 +15,8 @@ from selenium.webdriver.firefox.options import Options
 
 # ------- パラメータ開始 -------
 
-geckodriver_path = "<GECKO DRIVER PATH>"
-
 url = "<YOUR MESHI RESERVE URL>"
+account_url = "<YOUR MESHI ACCOUNT URL>"
 
 schedule = "2023-05-05 12:00:00.00"
 
@@ -50,6 +49,35 @@ def run(driver):
     #                       '//div[@onclick="target_area_of[\'\'].more()"]')
 
     # print(f'Finish: {datetime.now()}', file=sys.stderr)
+
+
+def get_reserve_code(driver, reserve_id):
+    try:
+        driver.get(account_url)
+        click_visible(
+            driver,
+            By.XPATH,
+            f'//div/span/a[@href="#"][@onclick="mypage.openBooking(\'{reserve_id}\');return false;"]',
+        )
+        qr_elem = driver.find_element(By.ID, "my_reservation_qrcode")
+        # R0327604_ef6d
+        return qr_elem.get_attribute("title").split(";")[2]
+    except:
+        return
+
+
+def cancel(driver, reserve_id):
+    try:
+        driver.get(account_url)
+        click_visible(
+            driver,
+            By.XPATH,
+            f'//div/span/a[@href="#"][@onclick="mypage.openBooking(\'{reserve_id}\');return false;"]',
+        )
+        click_visible(driver, By.ID, "booking_cancel")
+        click_visible(driver, By.ID, "button_送信する")
+    except:
+        return
 
 
 def reserve(driver, start_time):
@@ -100,6 +128,7 @@ def initial(driver):
 # https://1024.hateblo.jp/entry/2022/01/15/011604
 # https://qiita.com/aonisai/items/29308611cece0897e949
 # https://qiita.com/ha_ru/items/86dfaae4c92e4a7be13f
+
 
 def wait_sync(driver, kind, ident):
     WebDriverWait(driver, wait_time).until(
@@ -162,32 +191,37 @@ def scheduler(driver):
 
 
 def main():
-    options = webdriver.FirefoxOptions()
-    options.page_load_strategy = "eager"
+    try:
+        options = webdriver.FirefoxOptions()
+        options.page_load_strategy = "eager"
 
-    # firefox_service = Service(geckodriver_path)
-    # driver = webdriver.Firefox(service=firefox_service, options=options)
-    driver = webdriver.Remote(
-        command_executor=os.environ["SELENIUM_URL"], options=options
-    )
+        # firefox_service = Service(geckodriver_path)
+        # driver = webdriver.Firefox(service=firefox_service, options=options)
+        driver = webdriver.Remote(
+            command_executor=os.environ["SELENIUM_URL"], options=options
+        )
 
-    # ロボット検知を回避
-    driver.execute_script(
-        "const newProto = navigator.__proto__;"
-        "delete newProto.webdriver;"
-        "navigator.__proto__ = newProto;"
-    )
+        # ロボット検知を回避
+        driver.execute_script(
+            "const newProto = navigator.__proto__;"
+            "delete newProto.webdriver;"
+            "navigator.__proto__ = newProto;"
+        )
 
-    # 出力が None のとき、ロボットと検知されない
-    print(
-        "navigator.webdriver:",
-        driver.execute_script("return navigator.webdriver"),
-        file=sys.stderr,
-    )
+        # 出力が None のとき、ロボットと検知されない
+        print(
+            "navigator.webdriver:",
+            driver.execute_script("return navigator.webdriver"),
+            file=sys.stderr,
+        )
 
-    print("opened a browser, please do not close it", file=sys.stderr)
-    # scheduler(driver)
-    run(driver)
+        print("opened a browser, please do not close it", file=sys.stderr)
+        # scheduler(driver)
+        run(driver)
+    except Exception as e:
+        print(e)
+    finally:
+        driver.quit()
 
 
 if __name__ == "__main__":
