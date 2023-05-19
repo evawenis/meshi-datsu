@@ -5,6 +5,9 @@ services:
     ports:
       - 7903:7900
       - 4444:4444
+    environment:
+      SE_NODE_SESSION_TIMEOUT: 100000
+      TZ: Asia/Tokyo
   python3:
     # image: python:3.8.10
     tty: true
@@ -13,3 +16,4 @@ services:
       - "./scripts:/root/meshi-datsu"
     environment:
       SELENIUM_URL: http://selenium:4444/wd/hub
+      TZ: Asia/Tokyo

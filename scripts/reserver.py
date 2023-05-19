@@ -13,6 +13,8 @@ from selenium.webdriver.support.select import Select
 from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.firefox.options import Options
 
+from modules import parse
+
 # ------- パラメータ開始 -------
 
 url = "<YOUR MESHI RESERVE URL>"
@@ -36,19 +38,25 @@ next_count = 0
 # firefox の操作
 def run(driver):
     print(f"Start:  {datetime.now()}", file=sys.stderr)
-    driver.get("https://google.com")
+    # driver.get(url)
     # initial(driver)
 
-    # arr = [1683604800, 1683691200, 1683777600, 1683864000,
-    #        1684123200, 1684209600, 1684296000, 1684382400, 1684468800]
-    # for start_time in arr:
+    # for day, hour, min in [
+    #     (23, 13, 0),
+    #     (24, 13, 0),
+    #     (31, 13, 0),
+    #     (26, 12, 30),
+    #     (2, 12, 30),
+    # ]:
+    #     start_time = parse.next_unix_time(day, hour, min)
     #     reserve(driver, start_time)
     #     driver.get(url)
     #     for _ in range(next_count):
-    #         click_visible(driver, By.XPATH,
-    #                       '//div[@onclick="target_area_of[\'\'].more()"]')
+    #         click_visible(
+    #             driver, By.XPATH, "//div[@onclick=\"target_area_of[''].more()\"]"
+    #         )
 
-    # print(f'Finish: {datetime.now()}', file=sys.stderr)
+    print(f'Finish: {datetime.now()}', file=sys.stderr)
 
 
 def get_reserve_code(driver, reserve_id):
@@ -85,7 +93,7 @@ def reserve(driver, start_time):
         click_visible(
             driver,
             By.XPATH,
-            f'//div[@data-start_unixtime="{start_time}"][@data-calendar_id="S001.{basho}..{start_time}.{start_time + 600}"]',
+            f'//div[@data-start_unixtime="{start_time}"][@data-calendar_id="S001.{basho}..{start_time}.{start_time + 1800}"]',
         )
         click_visible(driver, By.NAME, "confirm")
         click_visible(driver, By.ID, "button_予約する")
@@ -102,6 +110,7 @@ def initial(driver):
     input_form(driver, By.NAME, "login_id", id)
     input_form(driver, By.NAME, "customer_password", pw)
     click_visible(driver, By.ID, "customer_login_button")
+    time.sleep(10)
     driver.get(url)
 
     while True:
