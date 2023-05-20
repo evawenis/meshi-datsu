@@ -1,4 +1,5 @@
 geckodriver.log
 myreserver.py
-mygenqr.py
+myconst.py
 __pycache__
+.vscode

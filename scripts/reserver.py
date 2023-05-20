@@ -1,189 +1,151 @@
 #!/usr/bin/env python3
 
 import os
+import re
 import sys
 import time
 import sched
 from datetime import datetime
-from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions
-from selenium.webdriver.support.select import Select
-from selenium.webdriver.firefox.service import Service
-from selenium.webdriver.firefox.options import Options
 
-from modules import parse
+from modules import sql
+from modules import genqr
+from modules import mydate
+from modules import firefox
 
-# ------- パラメータ開始 -------
-
-url = "<YOUR MESHI RESERVE URL>"
-account_url = "<YOUR MESHI ACCOUNT URL>"
-
-schedule = "2023-05-05 12:00:00.00"
-
-secret1 = "S0000063"
-secret2 = "S0000064"
-
-basho = secret2
-
-id = "<YOUR MAILADDR>"
-pw = "<YOUR PASSWD>"
-
-wait_time = 3
-
-next_count = 0
+from modules.const import *
 
 
 # firefox の操作
 def run(driver):
     print(f"Start:  {datetime.now()}", file=sys.stderr)
-    # driver.get(url)
-    # initial(driver)
+    login(driver)
 
-    # for day, hour, min in [
-    #     (23, 13, 0),
-    #     (24, 13, 0),
-    #     (31, 13, 0),
-    #     (26, 12, 30),
-    #     (2, 12, 30),
-    # ]:
-    #     start_time = parse.next_unix_time(day, hour, min)
-    #     reserve(driver, start_time)
-    #     driver.get(url)
-    #     for _ in range(next_count):
-    #         click_visible(
-    #             driver, By.XPATH, "//div[@onclick=\"target_area_of[''].more()\"]"
-    #         )
+    tmplist = retr_reserve_data(driver)
+    result = retr_reserve_code(driver, tmplist)
+    sql.insert_reserve_data(result)
 
-    print(f'Finish: {datetime.now()}', file=sys.stderr)
+    for day, hour, min in [(2, 12, 30)]:
+        start_time = mydate.next_unix_time(day, hour, min)
+        print(start_time)
+        reserve(driver, start_time)
+        driver.get(RESERVE_URL)
+        click_more(driver)
+
+    time.sleep(3)
+
+    print(f"Finish: {datetime.now()}", file=sys.stderr)
 
 
-def get_reserve_code(driver, reserve_id):
+def retr_reserve_data(driver):
+    driver.get(ACCOUNT_URL)
+    driver.wait_sync(By.CLASS_NAME, "list_item")
+    elems = driver.find_elements(By.CLASS_NAME, "list_item")
+    # compile
+    regex = list(map(re.compile, RAW_REGEX))
+    result = []
+    for elem in elems:
+        result.append([re.findall(rg, elem.text)[0] for rg in regex])
+
+        # reserve_date (e.g. 2023/05/19 -> 2023-05-19)
+        iso_date = re.sub(r"/", "-", result[-1][1])
+
+        # reserve_time (e.g. 13:00 - 13:30 -> 13:00, 13:30)
+        tm = result[-1][2].split(" - ")
+        result[-1] += [
+            # isoformat to unixtime (e.g. 2023-05-19T13:00 -> 1684468800)
+            int(datetime.fromisoformat("T".join([iso_date, t])).timestamp())
+            for t in tm
+        ]
+
+    return result
+
+
+# retr_reserve_data で取得したリストを引数に取る
+# 引数に、乱数付きの予約番号を追加したリストを返す
+def retr_reserve_code(driver, reserve_data_list: list[str]):
     try:
-        driver.get(account_url)
-        click_visible(
-            driver,
-            By.XPATH,
-            f'//div/span/a[@href="#"][@onclick="mypage.openBooking(\'{reserve_id}\');return false;"]',
-        )
-        qr_elem = driver.find_element(By.ID, "my_reservation_qrcode")
-        # R0327604_ef6d
-        return qr_elem.get_attribute("title").split(";")[2]
-    except:
+        driver.get(ACCOUNT_URL)
+        for i, data in enumerate(reserve_data_list):
+            id = data[0]
+            driver.click_visible(
+                By.XPATH,
+                f'//div/span/a[@href="#"][@onclick="mypage.openBooking(\'{id}\');return false;"]',
+            )
+            qr_elem = driver.retr_element(By.ID, "my_reservation_qrcode")
+            reserve_data_list[i].append(qr_elem.get_attribute("title").split(";")[2])
+            driver.click_visible(By.ID, "button_閉じる")
+        return reserve_data_list
+    except Exception as e:
+        print(e)
         return
 
 
 def cancel(driver, reserve_id):
     try:
-        driver.get(account_url)
-        click_visible(
-            driver,
+        driver.get(ACCOUNT_URL)
+        driver.click_visible(
             By.XPATH,
             f'//div/span/a[@href="#"][@onclick="mypage.openBooking(\'{reserve_id}\');return false;"]',
         )
-        click_visible(driver, By.ID, "booking_cancel")
-        click_visible(driver, By.ID, "button_送信する")
-    except:
+        driver.click_visible(By.ID, "booking_cancel")
+        driver.click_visible(By.ID, "button_送信する")
+        driver.click_alert_confirm()
+        driver.click_visible(By.ID, "button_閉じる")
+    except Exception as e:
+        print(e)
         return
 
 
-def reserve(driver, start_time):
+def reserve(driver, start_time, place):
     try:
-        click_visible(
-            driver,
+        driver.click_visible(
             By.XPATH,
-            f'//div[@data-start_unixtime="{start_time}"][@data-calendar_id="S001.{basho}..{start_time}.{start_time + 1800}"]',
+            f'//div[@data-start_unixtime="{start_time}"][@data-calendar_id="S001.{place}..{start_time}.{start_time + 1800}"]',
         )
-        click_visible(driver, By.NAME, "confirm")
-        click_visible(driver, By.ID, "button_予約する")
-        # click_visible(driver, By.ID, 'button_確認しました')
-    except:
+        driver.click_visible(By.NAME, "confirm")
+        driver.click_visible(By.ID, "button_予約する")
+        driver.click_visible(By.ID, "button_確認しました")
+    except Exception as e:
+        print(e)
         return
 
 
-def initial(driver):
-    global next_count
-    driver.get(url)
+def click_more(driver):
+    driver.get(RESERVE_URL)
+    for _ in range(next_count):
+        driver.click_visible(By.XPATH, "//div[@onclick=\"target_area_of[''].more()\"]")
 
-    click_visible(driver, By.XPATH, "/html/body/div/div[4]/div[1]/div/span")
-    input_form(driver, By.NAME, "login_id", id)
-    input_form(driver, By.NAME, "customer_password", pw)
-    click_visible(driver, By.ID, "customer_login_button")
-    time.sleep(10)
-    driver.get(url)
 
+def count_more(driver):
+    driver.get(RESERVE_URL)
     while True:
         try:
-            click_visible(
-                driver, By.XPATH, "//div[@onclick=\"target_area_of[''].more()\"]"
+            driver.click_visible(
+                By.XPATH, "//div[@onclick=\"target_area_of[''].more()\"]"
             )
             next_count += 1
         except:
             break
 
 
-# ------- パラメータ終わり -------
+def login(driver):
+    global next_count
+    driver.get(RESERVE_URL)
 
-# geckodriver
-# https://github.com/mozilla/geckodriver
-
-# References
-# https://ai-inter1.com/python-selenium/
-# https://kurozumi.github.io/selenium-python/locating-elements.html
-# https://qiita.com/r_ishimori/items/4ed251f0d166d5c9cee1
-# https://scrapbox.io/kb84tkhr-pub/Selenium_-_%E3%81%8B%E3%81%AA%E3%82%89%E3%81%9Awebdriver%E3%82%92%E9%96%89%E3%81%98%E3%82%8B
-# https://qiita.com/tkdayo/items/5a110e24abad85822b8f
-# https://1024.hateblo.jp/entry/2022/01/15/011604
-# https://qiita.com/aonisai/items/29308611cece0897e949
-# https://qiita.com/ha_ru/items/86dfaae4c92e4a7be13f
-
-
-def wait_sync(driver, kind, ident):
-    WebDriverWait(driver, wait_time).until(
-        expected_conditions.presence_of_all_elements_located((kind, ident))
+    driver.click_visible(
+        By.XPATH, '//span[@onclick="stage.openCustomerLoginDialog();"]'
     )
-
-
-def scroll(driver, kind, ident, elem=None):
-    if elem is None:
-        elem = driver.find_element(kind, ident)
-    driver.execute_script("arguments[0].scrollIntoView(true);", elem)
-    WebDriverWait(driver, wait_time).until(
-        expected_conditions.visibility_of_element_located((kind, ident))
-    )
-
-
-def click_visible(driver, kind, ident):
-    wait_sync(driver, kind, ident)
-    elem = driver.find_element(kind, ident)
-    scroll(driver, kind, ident, elem)
-    elem.click()
-
-
-def click_invisible(driver, kind, ident):
-    wait_sync(driver, kind, ident)
-    elem = driver.find_element(kind, ident)
-    driver.execute_script("arguments[0].click();", elem)
-
-
-def select_pulldown(driver, kind, ident, string):
-    wait_sync(driver, kind, ident)
-    scroll(driver, kind, ident)
-    Select(driver.find_element(kind, ident)).select_by_value(string)
-
-
-def input_form(driver, kind, ident, input):
-    wait_sync(driver, kind, ident)
-    elem = driver.find_element(kind, ident)
-    scroll(driver, kind, ident, elem)
-    elem.send_keys(input)
+    driver.input_form(By.NAME, "login_id", ID)
+    driver.input_form(By.NAME, "customer_password", PW)
+    driver.click_visible(By.ID, "customer_login_button")
+    driver.wait_sync(By.ID, "stage_action_button_reservation_")
 
 
 def scheduler(driver):
     now = datetime.now()
     now = datetime(now.year, now.month, now.day, now.hour, now.minute, now.second)
-    comp = datetime.strptime(schedule, "%Y-%m-%d %H:%M:%S.%f")
+    comp = datetime.strptime(SCHEDULE, "%Y-%m-%d %H:%M:%S.%f")
     diff = comp - now
 
     if diff.days < 0:
@@ -191,7 +153,7 @@ def scheduler(driver):
         return
 
     print(
-        f"waiting {diff}, until {datetime.strptime(schedule, '%Y-%m-%d %H:%M:%S.%f')}",
+        f"waiting {diff}, until {datetime.strptime(SCHEDULE, '%Y-%m-%d %H:%M:%S.%f')}",
         file=sys.stderr,
     )
     scheduler = sched.scheduler(time.time, time.sleep)
@@ -200,37 +162,8 @@ def scheduler(driver):
 
 
 def main():
-    try:
-        options = webdriver.FirefoxOptions()
-        options.page_load_strategy = "eager"
-
-        # firefox_service = Service(geckodriver_path)
-        # driver = webdriver.Firefox(service=firefox_service, options=options)
-        driver = webdriver.Remote(
-            command_executor=os.environ["SELENIUM_URL"], options=options
-        )
-
-        # ロボット検知を回避
-        driver.execute_script(
-            "const newProto = navigator.__proto__;"
-            "delete newProto.webdriver;"
-            "navigator.__proto__ = newProto;"
-        )
-
-        # 出力が None のとき、ロボットと検知されない
-        print(
-            "navigator.webdriver:",
-            driver.execute_script("return navigator.webdriver"),
-            file=sys.stderr,
-        )
-
-        print("opened a browser, please do not close it", file=sys.stderr)
-        # scheduler(driver)
+    with firefox.FirefoxDriver("normal", WAIT_TIME) as driver:
         run(driver)
-    except Exception as e:
-        print(e)
-    finally:
-        driver.quit()
 
 
 if __name__ == "__main__":

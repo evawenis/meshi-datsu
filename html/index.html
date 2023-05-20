@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+
+<body>
+
+    <script src="qrcode.js"></script>
+    <script src="jquery-1.11.1.min.js"></script>
+    <div id="qrZone" title="qrCode"></div>
+    <script>
+        let url = new URL(window.location.href);
+        let params = url.searchParams;
+        let code = params.get('qr');
+
+        $('#qrZone').html('');
+        new QRCode(document.getElementById('qrZone'), {
+            text: code,
+            width: 512,
+            height: 512,
+        });
+        // };
+    </script>
+</body>
+
+</html>

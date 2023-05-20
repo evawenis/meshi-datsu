@@ -43,7 +43,17 @@ def insert_reserve_data(reserve_data_list: list[str]):
             (%s, %s, %s, %s, %s, %s, %s)
         """
 
-        data = [tuple(d) for d in reserve_data_list]
-
-        cursor.executemany(sql, data)
+        cursor.executemany(sql, reserve_data_list)
         cnx.commit()
+
+
+# def insert_reserve_que():
+
+
+def select_by_date_from_reserved(date: str):
+    with MeshiReserveDB() as (cursor, cnx):
+        sql = """
+        select * from reserved where date = %s
+        """
+        cursor.execute(sql, (date,))
+        return cursor.fetchall()

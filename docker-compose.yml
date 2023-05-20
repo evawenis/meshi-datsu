@@ -11,9 +11,31 @@ services:
   python3:
     # image: python:3.8.10
     tty: true
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile-python3
     volumes:
-      - "./scripts:/root/meshi-datsu"
+      - ./scripts:/root/meshi-datsu
     environment:
       SELENIUM_URL: http://selenium:4444/wd/hub
       TZ: Asia/Tokyo
+  mysql:
+    image: mysql:8
+    volumes:
+      - ./config/mysql/initdb.d:/docker-entrypoint-initdb.d
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_USER=meshiRobber
+      - MYSQL_PASSWORD=meshiRobber
+      - MYSQL_DATABASE=MeshiReserve
+      - TZ=Asia/Tokyo
+    ports:
+      - 9306:3306
+  apache:
+    image: httpd:alpine3.18
+    ports:
+      - 8088:80
+    volumes:
+      - ./html:/usr/local/apache2/htdocs
+    environment:
+      - TZ=Asia/Tokyo

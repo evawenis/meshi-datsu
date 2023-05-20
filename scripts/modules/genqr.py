@@ -1,42 +1,30 @@
-import requests
-import qrcode
+import base64
 from time import sleep
+from selenium.webdriver.common.by import By
+from myconst import *
 
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/113.0",
-    "Accept": "*/*",
-    "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
-    "Accept-Encoding": "gzip, deflate",
-    "X-Requested-With": "XMLHttpRequest",
-    "Dnt": "1",
-    "Referer": "<URL>",
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "same-origin",
-    "Te": "trailers",
-    "Connection": "close",
-}
 
-for _ in range(5):
-    try:
-        r = requests.get("<QR RAND URL>", headers=headers)
-        r.raise_for_status()
-    except Exception as err:
-        print(f'Error: {err}')
-        sleep(2)
+def generate_qr(driver, reserve_code):
+    for _ in range(5):
+        try:
+            driver.get(TOKEN_URL)
+        except Exception as err:
+            print(f"Error: {err}")
+            sleep(2)
+        else:
+            break
     else:
-        break
-else:
-    print("Abort: could not connect to QR generation server.")
-    exit(1)
+        print("Abort: could not connect to QR generation server.")
+        exit(1)
 
-qr = qrcode.QRCode(
-    version=4,
-    error_correction=qrcode.constants.ERROR_CORRECT_H,
-    box_size=15,
-    border=1,
-)
+    token = driver.find_element(By.XPATH, "/html/body").text
+    driver.get(f"http://apache?qr={token};0;{reserve_code}")
+    result = driver.find_element(By.XPATH, "/html/body/div/img")
+    b64png = result.get_attribute("src").replace("data:image/png;base64,", "")
+    rawpng = base64.b64decode(b64png)
+    filename = f"/tmp/{reserve_code}_{token}.png"
 
-qr.add_data(f"{r.text}<VALUE>")
-qr.make(fit=True)
-qr.make_image().save("aaa.png")
+    with open(filename, mode="wb") as f:
+        f.write(rawpng)
+
+    return filename

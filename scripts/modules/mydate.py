@@ -68,3 +68,16 @@ def next_unix_time(day: int, hour: int, minute: int) -> int:
 
 def get_next_reserve_date(day: int) -> int:
     return next_unix_time(day, 12, 0)
+
+
+# e.g. 1684546800 -> 2023/05/20
+def gen_next_date(day: int):
+    unix_time = next_unix_time(day, 0, 0)
+    dt = datetime.datetime.fromtimestamp(unix_time)
+    return dt.strftime("%Y/%m/%d")
+
+
+# return 2023/05/20
+def gen_today():
+    today = datetime.date.today()
+    return today.strftime("%Y/%m/%d")

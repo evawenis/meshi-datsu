@@ -42,6 +42,9 @@ class FirefoxDriver:
     def get(self, url: str):
         return self.driver.get(url)
 
+    def find_element(self, kind, ident):
+        return self.driver.find_element(kind, ident)
+
     def find_elements(self, kind, ident):
         return self.driver.find_elements(kind, ident)
 
