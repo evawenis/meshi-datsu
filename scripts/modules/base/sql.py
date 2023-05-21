@@ -1,10 +1,8 @@
 import mysql.connector
 
 
-class MeshiReserveDB:
-    def __init__(
-        self, host="mysql", database="MeshiReserve", user="root", password="root"
-    ):
+class DataBaseHandler:
+    def __init__(self, host, database, user, password):
         self.host = host
         self.database = database
         self.user = user
@@ -26,34 +24,83 @@ class MeshiReserveDB:
             self.cnx.close()
 
 
-# retr_reserve_code + accountid + whoreseved で取得したリストを引数に取る
-# 現在は、retr_reserve_code で取得したリストを引数に取る
-def insert_reserve_data(reserve_data_list: list[str]):
-    with MeshiReserveDB() as (cursor, cnx):
+class MeshiReserveDB(DataBaseHandler):
+    def __init__(
+        self, host="mysql", database="MeshiReserve", user="root", password="root"
+    ):
+        super().__init__(host, database, user, password)
+
+    def __enter__(self):
+        super().__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        super().__exit__(exc_type, exc_val, exc_tb)
+
+    def commit(self):
+        return self.cnx.commit()
+
+    def execute(self, operation, params=None):
+        return self.cursor.execute(operation, params)
+
+    def executemany(self, operation, seq_of_params):
+        return self.cursor.executemany(operation, seq_of_params)
+
+    def fetchall(self):
+        return self.cursor.fetchall()
+
+    # 仮実装
+    # slack の一時キューから SQL へ登録
+    def insert_temp_to_que(self, user_id, temp_ques: list[int]):
+        sql = """
+        insert into que
+            (start, place, whoqued)
+        values
+            (%s, %s, %s)
+        """
+        self.executemany(sql, [t + [user_id] for t in temp_ques])
+        self.commit()
+
+    # retr_reserve_code + accountid + whoreseved で取得したリストを引数に取る
+    # 現在は、retr_reserve_code で取得したリストを引数に取る
+    def insert_reserved_data(self, reserved_data_list: list[str]):
         # sql = """
         # insert into que
-        #     (id, date, time, place, start, end, idwithrand, accountid, whoreserved)
+        #     (id, date, day, time, place, start, end, idwithrand, accountid, whoreserved)
         # values
-        #     (%s, %s, %s, %s, %d, %d, %s, %d, %s)
+        #     (%s, %s, %s, %s, %s, %s, %s, %s, %d, %s)
         # """
         sql = """
         insert into reserved
-            (id, date, time, place, start, end, idwithrand)
+            (id, date, day, time, place, start, end, idwithrand)
         values
-            (%s, %s, %s, %s, %s, %s, %s)
+            (%s, %s, %s, %s, %s, %s, %s, %s)
         """
+        self.executemany(sql, reserved_data_list)
+        self.commit()
 
-        cursor.executemany(sql, reserve_data_list)
-        cnx.commit()
+    def select_all_reserved_data(self):
+        self.execute("select * from reserved")
+        return self.fetchall()
 
-
-# def insert_reserve_que():
-
-
-def select_by_date_from_reserved(date: str):
-    with MeshiReserveDB() as (cursor, cnx):
+    def select_all_reserved_date_where_date(self, date: str):
         sql = """
         select * from reserved where date = %s
         """
-        cursor.execute(sql, (date,))
-        return cursor.fetchall()
+        self.execute(sql, (date,))
+        return self.fetchall()
+
+    def select_all_que_where_slack_id(self, slack_id: str):
+        sql = """
+        select * from que where whoqued = %s
+        """
+        self.execute(sql, (slack_id,))
+        return self.fetchall()
+
+    # slack id を受け取り、そのユーザの予約キューをすべて削除する
+    def delete_all_que_where_slack_id(self, slack_id: str):
+        sql = """
+        delete from que where whoqued = %s
+        """
+        self.execute(sql, (slack_id,))
+        return self.commit()

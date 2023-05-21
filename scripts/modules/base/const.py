@@ -19,3 +19,27 @@ RAW_REGEX = [
     r"<TIME>",
     r"<PLACE>",
 ]
+
+# 開始時刻と、0 or 1 (<PLACE1>|<PLACE2>)、スラックユーザ ID
+# [(1685676600, 1, M12MKL928VR) ...]
+QUE_START = 0
+QUE_PLACE = 1
+QUE_SLACK_ID = 2
+
+# [('R2345833', '2023/05/23', '13:00 - 13:30', '<PLACE2>', 1684814400, 1684816200, 'R2345833_f98c')]
+# RESERVE
+RSV_ID = 0
+RSV_DATE = 1
+RSV_TIME = 2
+RSV_PLACE = 3
+RSV_START = 4
+RSV_END = 5
+# with rand
+RSV_IDWR = 6
+
+LST_EMPTY = -1
+LST_RESERVE = 0
+LST_TMPQUE = 1
+
+# "normal" or "eager"
+STRATEGY = "normal"

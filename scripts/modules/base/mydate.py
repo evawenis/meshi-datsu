@@ -70,14 +70,40 @@ def get_next_reserve_date(day: int) -> int:
     return next_unix_time(day, 12, 0)
 
 
-# e.g. 1684546800 -> 2023/05/20
+# vulnerable?
+# 現在 2023/05/20 日
+# e.g. 20 -> 2023/06/20
 def gen_next_date(day: int):
     unix_time = next_unix_time(day, 0, 0)
     dt = datetime.datetime.fromtimestamp(unix_time)
     return dt.strftime("%Y/%m/%d")
 
 
+# 1684246800 (2023/05/16 23:20:00) -> 2023/05/16
+def unix_to_date(unix_time: int):
+    dt = datetime.datetime.fromtimestamp(unix_time)
+    return dt.strftime("%Y/%m/%d")
+
+
+# 1684246800 (2023/05/16 23:20:00) -> 2023/05/16 火 23:20 - 23:50
+def unix_to_reserve_limit(unix_time: int):
+    time = datetime.datetime.fromtimestamp(unix_time)
+    end = time + datetime.timedelta(minutes=30)
+    start = time.strftime("%Y/%m/%d")
+    start_time = time.strftime("%H:%M")
+    end = end.strftime("%H:%M")
+    reserve_limit = f"{start} {gen_day(unix_time)} {start_time} - {end}"
+
+    return reserve_limit
+
+
 # return 2023/05/20
 def gen_today():
     today = datetime.date.today()
     return today.strftime("%Y/%m/%d")
+
+
+def gen_day(unix_time):
+    weekday = ("月", "火", "水", "木", "金", "土", "日")
+    day = datetime.datetime.fromtimestamp(unix_time).weekday()
+    return weekday[day]
