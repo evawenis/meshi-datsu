@@ -19,6 +19,8 @@ services:
     environment:
       SELENIUM_URL: http://selenium:4444/wd/hub
       TZ: Asia/Tokyo
+    ports:
+      - 3829:3000
   mysql:
     image: mysql:8
     volumes:

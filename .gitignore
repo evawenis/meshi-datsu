@@ -3,3 +3,5 @@ myreserver.py
 myconst.py
 __pycache__
 .vscode
+test-slack.py
+myfirefox.py
