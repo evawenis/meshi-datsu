@@ -2,6 +2,10 @@ from modules.base import myfirefox
 from modules.base.myconst import *
 from modules.base import sql
 
+import time
+import base64
+from selenium.webdriver.common.by import By
+
 
 class WebDriverWithDB(myfirefox.MeshiDatsuDriver, sql.MeshiReserveDB):
     def __init__(
@@ -71,3 +75,37 @@ class WebDriverWithDB(myfirefox.MeshiDatsuDriver, sql.MeshiReserveDB):
         result = super().retr_reserved_with_rand_from_account(tmplist)
         # SQL に登録
         super().insert_reserved_data(result)
+
+    # 乱数付き予約番号を引数に取る
+    # QR コードを生成して、ファイルを作成する
+    # ファイル名のフルパスを返す
+    def generate_qr(self, reserve_code):
+        for _ in range(5):
+            try:
+                super().get(self.token_url)
+            except Exception as err:
+                print(f"Error: {err}")
+                time.sleep(2)
+            else:
+                break
+        else:
+            raise Exception(
+                "QR コードのトークンを生成するサーバへ正常に接続できませんでした。generate_qr でエラーが発生しました。"
+            )
+
+        token = super().retr_element(By.XPATH, "/html/body").text
+        super().get(f"http://apache?qr={token};0;{reserve_code}")
+        result = super().retr_element(By.XPATH, "/html/body/div/img")
+        b64png = result.get_attribute("src").replace("data:image/png;base64,", "")
+        rawpng = base64.b64decode(b64png)
+        filename = f"/tmp/{reserve_code}_{token}.png"
+
+        with open(filename, mode="wb") as f:
+            f.write(rawpng)
+
+        return filename
+
+    def delete_reserved_where_reserved_id_with_rand(self, reserved_id_with_rand):
+        return super().delete_reserved_where_reserved_id_with_rand(
+            reserved_id_with_rand
+        )

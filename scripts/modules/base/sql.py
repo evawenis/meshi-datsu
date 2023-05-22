@@ -2,11 +2,12 @@ import mysql.connector
 
 
 class DataBaseHandler:
-    def __init__(self, host, database, user, password):
+    def __init__(self, host, database, user, password, charset):
         self.host = host
         self.database = database
         self.user = user
         self.password = password
+        self.charset = charset
 
     def __enter__(self):
         self.cnx = mysql.connector.connect(
@@ -14,6 +15,7 @@ class DataBaseHandler:
             password=self.password,
             host=self.host,
             database=self.database,
+            charset=self.charset,
         )
         self.cursor = self.cnx.cursor()
         return self.cursor, self.cnx
@@ -26,9 +28,14 @@ class DataBaseHandler:
 
 class MeshiReserveDB(DataBaseHandler):
     def __init__(
-        self, host="mysql", database="MeshiReserve", user="root", password="root"
+        self,
+        host="mysql",
+        database="MeshiReserve",
+        user="root",
+        password="root",
+        charset="utf8mb4",
     ):
-        super().__init__(host, database, user, password)
+        super().__init__(host, database, user, password, charset)
 
     def __enter__(self):
         super().__enter__()
@@ -72,11 +79,17 @@ class MeshiReserveDB(DataBaseHandler):
         # """
         sql = """
         insert into reserved
-            (id, date, day, time, place, start, end, idwithrand)
+            (id, date, time, place, start, end, idwithrand)
         values
-            (%s, %s, %s, %s, %s, %s, %s, %s)
+            (%s, %s, %s, %s, %s, %s, %s)
         """
-        self.executemany(sql, reserved_data_list)
+        # 一意性違反に対処
+        for reserved_data in reserved_data_list:
+            try:
+                self.execute(sql, reserved_data)
+            except mysql.connector.errors.IntegrityError:
+                continue
+
         self.commit()
 
     def select_all_reserved_data(self):
@@ -103,4 +116,11 @@ class MeshiReserveDB(DataBaseHandler):
         delete from que where whoqued = %s
         """
         self.execute(sql, (slack_id,))
+        return self.commit()
+
+    def delete_reserved_where_reserved_id_with_rand(self, reserved_id_with_rand):
+        sql = """
+        delete from reserved where idwithrand = %s
+        """
+        self.execute(sql, (reserved_id_with_rand,))
         return self.commit()
