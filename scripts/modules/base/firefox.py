@@ -3,8 +3,6 @@
 import os
 import re
 import sys
-import time
-import base64
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -204,7 +202,7 @@ class MeshiDatsuDriver(FirefoxDriver):
         element = (
             f'//div[@data-start_unixtime="{start_time}"]'
             f'[@data-calendar_id="S001.{FUKURAS if place else CERULEAN}..'
-            f'{start_time}.{start_time + 1800}"]'
+            f'{start_time}.{start_time + RESERVE_LIMIT}"]'
         )
 
         # 受付前の文字列は今後確認し、実装する必要あり
@@ -223,7 +221,8 @@ class MeshiDatsuDriver(FirefoxDriver):
 
         super().click_visible(By.NAME, "confirm")
         super().click_visible(By.ID, "button_予約する")
-        # 2 度現れる！
+        # 3 度現れる！
+        super().wait_until_disappear(By.ID, "message_box")
         super().wait_until_disappear(By.ID, "message_box")
         super().wait_until_disappear(By.ID, "message_box")
         super().click_visible(By.ID, "button_確認しました")
@@ -240,42 +239,14 @@ class MeshiDatsuDriver(FirefoxDriver):
         super().click_visible(By.ID, "booking_cancel")
         super().click_visible(By.ID, "button_送信する")
         super().click_alert_confirm()
-        # 2 度現れる！
+        # 3 度現れる！
+        super().wait_until_disappear(By.ID, "message_box")
         super().wait_until_disappear(By.ID, "message_box")
         super().wait_until_disappear(By.ID, "message_box")
         super().click_visible(By.ID, "button_閉じる")
 
-    # 乱数付き予約番号を引数に取る
-    # QR コードを生成して、ファイルを作成する
-    # ファイル名のフルパスを返す
-    def generate_qr(self, reserve_code):
-        for _ in range(5):
-            try:
-                super().get(self.token_url)
-            except Exception as err:
-                print(f"Error: {err}")
-                time.sleep(2)
-            else:
-                break
-        else:
-            raise Exception(
-                "QR コードのトークンを生成するサーバへ正常に接続できませんでした。generate_qr でエラーが発生しました。"
-            )
-
-        token = super().retr_element(By.XPATH, "/html/body").text
-        super().get(f"http://apache?qr={token};0;{reserve_code}")
-        result = super().retr_element(By.XPATH, "/html/body/div/img")
-        b64png = result.get_attribute("src").replace("data:image/png;base64,", "")
-        rawpng = base64.b64decode(b64png)
-        filename = f"/tmp/{reserve_code}_{token}.png"
-
-        with open(filename, mode="wb") as f:
-            f.write(rawpng)
-
-        return filename
-
     # 現在ログイン中のアカウントの予約データをすべて取得する
-    # [['R0345833', '2023/05/23', '13:00 - 13:30', '<PLACE2>', 1684814400, 1684816200], ...]
+    # [['R2345833', '2023/05/23', '13:00 - 13:30', '<PLACE2>', 1684814400, 1684816200], ...]
     def retr_reserved_data_from_account(self):
         self.login()
         super().get(self.account_url)
@@ -303,7 +274,7 @@ class MeshiDatsuDriver(FirefoxDriver):
     # 前提：ログイン中
     # retr_reserve_data_from_account で取得したリストを引数に取る
     # 引数に、乱数付きの予約番号を追加したリストを返す
-    # [['R0345833', '2023/05/23', '13:00 - 13:30', '<PLACE2>', 1684814400, 1684816200, 'R0345833_768c'], ...]
+    # [['R2345833', '2023/05/23', '13:00 - 13:30', '<PLACE2>', 1684814400, 1684816200, 'R0345833_9b8c'], ...]
     def retr_reserved_with_rand_from_account(self, reserve_data_list: list[str]):
         super().get(self.account_url)
         for i, data in enumerate(reserve_data_list):
@@ -316,3 +287,22 @@ class MeshiDatsuDriver(FirefoxDriver):
             reserve_data_list[i].append(qr_elem.get_attribute("title").split(";")[2])
             super().click_visible(By.ID, "button_閉じる")
         return reserve_data_list
+
+    # 現在の予約状況を取得
+    def retr_current_reserve_status(self):
+        result = self.retr_elements(By.CLASS_NAME, "reception_calendar_daily_item")
+        strings = []
+        for dates in result:
+            date = dates.find_element(
+                By.CLASS_NAME, "reception_calendar_daily_item_header"
+            )
+            strings.append(date.text)
+            reserves = dates.find_elements(By.CLASS_NAME, "reservation_calendar_item")
+            for reserve in reserves:
+                if "受付終了" in reserve.text:
+                    continue
+                strings.append(reserve.text)
+            else:
+                strings.append("")
+
+        return "\n".join(strings)

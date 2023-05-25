@@ -10,27 +10,19 @@ from slack_sdk.signature import SignatureVerifier
 from collections import OrderedDict
 
 from modules.base.myconst import *
+from modules.base import myfirefox
 from modules import meshidatsu
 from modules.base import sql
 from modules import mydate
 
-token = "<YOUR SLACK API TOKEN>"
-secret = "<YOUR SLACK API SECRET>"
-
 limit = datetime.datetime(1, 1, 1)
 last = LST_EMPTY
-
-app = Flask(__name__)
-client = WebClient(token=token)
-signature_verifier = SignatureVerifier(secret)
 
 pending_data = {}
 
 
 app = Flask(__name__)
-client = WebClient(token=token)
-client = WebClient(token=token)
-signature_verifier = SignatureVerifier(secret)
+signature_verifier = SignatureVerifier(SECRET)
 
 
 class LRUCache:
@@ -54,32 +46,49 @@ class LRUCache:
 
 
 class SlackBot:
-    def __init__(self, token, channel):
+    def __init__(self, token, event):
         self.client = WebClient(token=token)
-        self.channel = channel
+        self.event = event
+        self.text = self.event.get("text", "")
+        self.slack_id = self.event["user"]
+        self.channel_id = self.event["channel"]
+
+    def text(self):
+        return self.text
+
+    def user_id(self):
+        return self.slack_id
+
+    def channel_id(self):
+        return self.channel_id
+
+    def post_message(self, text):
+        response = self.client.chat_postMessage(channel=self.channel_id, text=text)
+        return response
+
+    def upload_file(self, file_path):
+        response = self.client.files_upload_v2(channels=self.channel_id, file=file_path)
+        return response
 
     def post_error_message(self, e):
         error_message = f"例外発生：{str(e)} トレースバック：{traceback.format_exc()}"
         try:
-            self.client.chat_postMessage(channel=self.channel, text=error_message)
+            self.post_message(text=error_message)
         except SlackApiError as e:
-            print(f"chat_postMessage で例外発生：{str(e)}")
+            print(f"post_message で例外発生：{str(e)}")
 
-    def handle_message(self, event):
-        text = event.get("text", "")
-        slack_id = event["user"]
-        channel_id = event["channel"]
+    def handle_message(self):
         # 正規表現パターンにマッチしたとき、関数ポインタを起動する
         for func, regex in func_regex:
-            if regex.match(text):
-                func(event, slack_id, channel_id)
+            if regex.match(self.text):
+                func(self)
 
 
 # r 1 12, .. の日付と時刻の入力が妥当か調べ、タプルの配列を返す
 # [(日, 時, 分, isplace2), ...]
-def parse_reserve_message(text, channel_id):
-    commands = re.sub(r" +", r" ", text)
-    commands = re.sub(r", +", r",", commands)
+def parse_reserve_message(slack_bot: SlackBot):
+    commands = re.sub(r" +", r" ", slack_bot.text())
+    commands = re.sub(r" *, +", r",", commands)
     commands = re.sub(r"^(R|r) +", r"", commands)
     commands = commands.strip().split(",")
 
@@ -91,14 +100,13 @@ def parse_reserve_message(text, channel_id):
         # 添字の調整 True のとき int の 1 に変換される
         pad = len(elems) == 3
         if length != 2 and length != 3:
-            client.chat_postMessage(channel=channel_id, text=f"エラー：{i+1} 番目")
+            slack_bot.post_message(f"エラー：{i+1} 番目")
             break
         if length == 3:
-            # <PALCE1>|<PALCE2>
+            # <PLACE1>|<PLACE2>
             if not re.match(r"^[cfCF]$", elems[0]):
-                client.chat_postMessage(
-                    channel=channel_id,
-                    text=f'<PALCE1>|<PALCE2> エラー：{i+1} 番目、"{elems[0]}"、<PALCE1> か <PALCE2> を選択するために、c か f が使用できます。',
+                slack_bot.post_message(
+                    f'<PLACE1>|<PLACE2> エラー：{i+1} 番目、"{elems[0]}"、<PLACE1> か <PLACE2> を選択するために、c か f が使用できます。'
                 )
                 break
             if place2 and re.match(r"^[cC]$", elems[0]):
@@ -108,9 +116,8 @@ def parse_reserve_message(text, channel_id):
         # 2 or 3 のとき
         # 日
         if not re.match(r"^[1-9]|[1-2][0-9]|3[0-1]$", elems[0 + pad]):
-            client.chat_postMessage(
-                channel=channel_id,
-                text=f'日エラー：{i+1} 番目、"{elems[0 + pad]}", カレンダーに存在する日付が使用できます。',
+            slack_bot.post_message(
+                f'日エラー：{i+1} 番目、"{elems[0 + pad]}", カレンダーに存在する日付が使用できます。'
             )
             break
         # 時間
@@ -123,9 +130,8 @@ def parse_reserve_message(text, channel_id):
             hour = int(hm[0])
             minute = int(hm[1])
         else:
-            client.chat_postMessage(
-                channel=channel_id,
-                text=f'時刻エラー：{i+1} 番目、"{elems[1 + pad]}"、時刻は、12:30 から 13:15 まで、15 分刻みで選択できます。',
+            slack_bot.post_message(
+                f'時刻エラー：{i+1} 番目、"{elems[1 + pad]}"、時刻は、12:30 から 13:15 まで、15 分刻みで選択できます。'
             )
             break
 
@@ -134,94 +140,67 @@ def parse_reserve_message(text, channel_id):
     return (len(result) != len(commands)), result
 
 
-def send_que_date(channel_id, unix_times):
+def send_que_date(slack_bot: SlackBot, unix_times):
     result = [
-        f"{mydate.unix_to_reserve_limit(date[0])} {'<PALCE2>' if date[1] else '<PALCE1>'}"
+        f"{mydate.unix_to_reserve_limit(date[0])} {'<PLACE2>' if date[1] else '<PLACE1>'}"
         for date in unix_times
     ]
     result.sort()
-    client.chat_postMessage(channel=channel_id, text="\n".join(result))
+    slack_bot.post_message("\n".join(result))
 
 
-def handle_request_yes(event, slack_id, channel_id):
-    if pending_data.get(slack_id) is None:
-        client.chat_postMessage(
-            channel=channel_id, text="承認エラー：あなたのリクエストは一時キューに登録されていません。"
-        )
+def handle_request_yes(slack_bot: SlackBot):
+    if pending_data.get(slack_bot.user_id()) is None:
+        slack_bot.post_message("承認エラー：あなたのリクエストは一時キューに登録されていません。")
         return
     with sql.MeshiReserveDB() as db:
-        db.insert_temp_to_que(slack_id, pending_data[slack_id])
-    del pending_data[slack_id]
-    client.chat_postMessage(
-        channel=channel_id, text="あなたのリクエストがキューへ登録されました。reserve で今すぐ予約を実行できます。"
-    )
+        db.insert_temp_to_que(slack_bot.user_id(), pending_data[slack_bot.user_id()])
+    del pending_data[slack_bot.user_id()]
+    slack_bot.post_message("あなたのリクエストがキューへ登録されました。reserve で今すぐ予約を実行できます。")
 
 
-def handle_request_no(event, slack_id, channel_id):
-    if pending_data.get(slack_id) is None:
-        client.chat_postMessage(
-            channel=channel_id, text="承認エラー：あなたのリクエストは一時キューに登録されていません。"
-        )
+def handle_request_no(slack_bot: SlackBot):
+    if pending_data.get(slack_bot.slack_id()) is None:
+        slack_bot.post_message("承認エラー：あなたのリクエストは一時キューに登録されていません。")
         return
-    del pending_data[slack_id]
-    client.chat_postMessage(channel=channel_id, text="あなたのリクエストが一時キューから削除されました。")
+    del pending_data[slack_bot.slack_id()]
+    slack_bot.post_message("あなたのリクエストが一時キューから削除されました。")
 
 
-def handle_request_showt(event, slack_id, channel_id):
-    if pending_data.get(slack_id) is None:
-        client.chat_postMessage(
-            channel=channel_id,
-            text="一時キューは空です。r コマンドで一時キューに登録してください。",
-        )
+def handle_request_showt(slack_bot: SlackBot):
+    if pending_data.get(slack_bot.user_id()) is None:
+        slack_bot.post_message("一時キューは空です。r コマンドで一時キューに登録してください。")
         return
-    client.chat_postMessage(
-        channel=channel_id,
-        text="一時キューに入っているリスト：",
-    )
-    send_que_date(channel_id, pending_data[slack_id])
+    slack_bot.post_message("一時キューに入っているリスト：")
+    send_que_date(slack_bot, pending_data[slack_bot.user_id()])
 
 
-def handle_request_reserve(event, slack_id, channel_id):
+def handle_request_reserve(slack_bot: SlackBot):
     global limit, last
     with sql.MeshiReserveDB() as db:
-        ques = db.select_all_que_where_slack_id(slack_id)
+        ques = db.select_all_que_where_slack_id(slack_bot.user_id())
     if not ques:
-        client.chat_postMessage(
-            channel=channel_id,
-            text="予約キューは空です。r コマンドと yes コマンドで予約キューに登録してください",
-        )
+        slack_bot.post_message("予約キューは空です。r コマンドと yes コマンドで予約キューに登録してください")
         return
-    send_que_date(channel_id, ques)
-    client.chat_postMessage(
-        channel=channel_id,
-        text=f"本当に今すぐ予約しますか？予約する場合は、1 分以内に execute を実行してください。",
-    )
+    send_que_date(slack_bot, ques)
+    slack_bot.post_message("本当に今すぐ予約しますか？予約する場合は、1 分以内に execute を実行してください。")
     limit = datetime.datetime.now()
     last = LST_RESERVE
 
 
 # 予約キューの実行を行い、結果を表示する
-def handle_request_execute(event, slack_id, channel_id):
+def handle_request_execute(slack_bot: SlackBot):
     global limit, last
-    client.chat_postMessage(
-        channel=channel_id,
-        text=f"予約を開始します。",
-    )
+    slack_bot.post_message("予約を開始します。")
     if last != LST_RESERVE or limit == LST_EMPTY:
-        client.chat_postMessage(
-            channel=channel_id,
-            text=f"まず reserve で予約内容が正しいかどうかを確認してください。",
-        )
+        slack_bot.post_message("まず reserve で予約内容が正しいかどうかを確認してください。")
         return
     if datetime.datetime.now() - limit > datetime.timedelta(seconds=60):
-        client.chat_postMessage(
-            channel=channel_id,
-            text=f"reserve で確認してから 1 分以上経ちました。もう一度確認してから実行してください。",
-        )
+        slack_bot.post_message("reserve で確認してから 1 分以上経ちました。もう一度確認してから実行してください。")
         return
 
     with meshidatsu.WebDriverWithDB() as handler:
-        result = handler.reserve_from_slack_id(slack_id)
+        result = handler.reserve_from_slack_id(slack_bot.user_id())
         account_result = handler.retr_reserved_data_from_account()
         full_result = handler.retr_reserved_with_rand_from_account(account_result)
         answer = []
@@ -229,11 +208,11 @@ def handle_request_execute(event, slack_id, channel_id):
         for e in full_result:
             for r in result:
                 if e[RSV_START] == r[QUE_START]:
-                    if e[RSV_PLACE] == "<PALCE2>" and r[QUE_PLACE] == 1:
+                    if e[RSV_PLACE] == "<PLACE2>" and r[QUE_PLACE] == 1:
                         answer.append(
                             f"{e[RSV_DATE]} {mydate.gen_day(e[RSV_START])} {e[RSV_TIME]} {e[RSV_PLACE]} {e[RSV_IDWR]} {r[2]}"
                         )
-                    elif e[RSV_PLACE] == "<PALCE1>" and r[QUE_PLACE] == 0:
+                    elif e[RSV_PLACE] == "<PLACE1>" and r[QUE_PLACE] == 0:
                         answer.append(
                             f"{e[RSV_DATE]} {mydate.gen_day(e[RSV_START])} {e[RSV_TIME]} {e[RSV_PLACE]} {e[RSV_IDWR]} {r[2]}"
                         )
@@ -244,70 +223,53 @@ def handle_request_execute(event, slack_id, channel_id):
                 continue
             answer.append(
                 f"{mydate.unix_to_reserve_limit(r[QUE_START])} "
-                f"{'<PALCE2>' if r[QUE_PLACE] else '<PALCE1>'} {r[2]}"
+                f"{'<PLACE2>' if r[QUE_PLACE] else '<PLACE1>'} {r[2]}"
             )
 
         answer = "\n".join(answer)
-        client.chat_postMessage(
-            channel=channel_id,
-            text=f"{answer}\n予約が完了しました。",
-        )
+        slack_bot.post_message(f"{answer}\n予約が完了しました。")
 
     limit = LST_EMPTY
     last = LST_EMPTY
 
 
-def handle_request_showq(event, slack_id, channel_id):
+def handle_request_showq(slack_bot: SlackBot):
     with sql.MeshiReserveDB() as db:
-        ques = db.select_all_que_where_slack_id(slack_id)
+        ques = db.select_all_que_where_slack_id(slack_bot.user_id())
     if not ques:
-        client.chat_postMessage(
-            channel=channel_id,
-            text="予約キューは空です。r コマンドと yes コマンドで予約キューに登録してください。",
-        )
+        slack_bot.post_message("予約キューは空です。r コマンドと yes コマンドで予約キューに登録してください。")
         return
-    client.chat_postMessage(
-        channel=channel_id,
-        text="予約キューに入っているリスト：",
-    )
-    send_que_date(channel_id, ques)
+    slack_bot.post_message("予約キューに入っているリスト：")
+    send_que_date(slack_bot, ques)
 
 
-def handle_request_insert_temp(event, slack_id, channel_id):
-    if pending_data.get(slack_id) is not None:
-        client.chat_postMessage(
-            channel=channel_id,
-            text=f"登録エラー：既に一時キューへあなたのリクエストが登録されています。リクエストを確認して、予約キューへ入れるか、削除してからもう一度試してください。",
+def handle_request_insert_temp(slack_bot: SlackBot):
+    if pending_data.get(slack_bot.user_id()) is not None:
+        slack_bot.post_message(
+            "登録エラー：既に一時キューへあなたのリクエストが登録されています。リクエストを確認して、予約キューへ入れるか、削除してからもう一度試してください。"
         )
         return
-    error, reqs = parse_reserve_message(event["text"], channel_id)
+    error, reqs = parse_reserve_message(slack_bot.text(), slack_bot.channel_id())
     if error:
         return
     unix_times = [[mydate.next_unix_time(r[0], r[1], r[2]), r[3]] for r in reqs]
-    pending_data[slack_id] = unix_times
-    send_que_date(channel_id, unix_times)
-    client.chat_postMessage(
-        channel=channel_id,
-        text="あなたのリクエストを一時キューへ登録しました。上記表示が正しければ、yes と送ることで、予約キューへ入れることが来ます。no でキャンセルできます。",
+    pending_data[slack_bot.user_id()] = unix_times
+    send_que_date(slack_bot, unix_times)
+    slack_bot.post_message(
+        "あなたのリクエストを一時キューへ登録しました。上記表示が正しければ、yes と送ることで、予約キューへ入れることが来ます。no でキャンセルできます。"
     )
 
 
 # [["2023/05/23 火 13:00 - 13:30 <PLACE2> R0345833_768c", <QR code PATH>], ...]
-def handle_request_qr(event, slack_id, channel_id):
+def handle_request_qr(slack_bot: SlackBot):
     today = mydate.gen_today()
     # today = mydate.gen_next_date(23)
     with sql.MeshiReserveDB() as db:
         result = db.select_all_reserved_date_where_date(today)
     if not result:
-        client.chat_postMessage(
-            channel=channel_id,
-            text="今日の予約は存在しません。",
-        )
+        slack_bot.post_message("今日の予約は存在しません。")
         return None
-    client.chat_postMessage(
-        channel=channel_id,
-        text="QR コードを生成します。",
-    )
+    slack_bot.post_message("QR コードを生成します。")
     res = []
     with meshidatsu.WebDriverWithDB() as driver:
         for e in result:
@@ -319,117 +281,77 @@ def handle_request_qr(event, slack_id, channel_id):
             )
 
     for qr in res:
-        client.chat_postMessage(channel=channel_id, text=qr[0])
-        client.files_upload_v2(channel=channel_id, file=qr[1])
+        slack_bot.post_message(qr[0])
+        slack_bot.upload_file(qr[1])
 
 
-def handle_request_refresh(event, slack_id, channel_id):
-    client.chat_postMessage(
-        channel=channel_id,
-        text="予約済みリストを更新します。",
-    )
+def handle_request_refresh(slack_bot: SlackBot):
+    slack_bot.post_message("予約済みリストを更新します。")
     with meshidatsu.WebDriverWithDB() as driver:
         driver.insert_current_account_all_reserved()
-    client.chat_postMessage(
-        channel=channel_id,
-        text="更新しました。",
-    )
+    slack_bot.post_message("更新しました。")
 
 
-def handle_request_showr(event, slack_id, channel_id):
+def handle_request_showr(slack_bot: SlackBot):
     with sql.MeshiReserveDB() as db:
         reserveds = db.select_all_reserved_data()
     if not reserveds:
-        client.chat_postMessage(
-            channel=channel_id,
-            # 今後時限式に変更する
-            text="予約済みリストは空です。r コマンドと yes コマンドで予約キューに登録し、reserve で予約を実行してください。",
+        # 今後時限式に変更する
+        slack_bot.post_message(
+            "予約済みリストは空です。r コマンドと yes コマンドで予約キューに登録し、reserve で予約を実行してください。"
         )
         return
-    client.chat_postMessage(
-        channel=channel_id,
-        text="予約済みに入っているリスト：",
-    )
-    send_reserved_date(channel_id, reserveds)
+    slack_bot.post_message("予約済みに入っているリスト：")
+    send_reserved_date(slack_bot, reserveds)
 
 
-def send_reserved_date(channel_id, reserveds):
+def send_reserved_date(slack_bot: SlackBot, reserveds):
     result = [
         f"{mydate.unix_to_reserve_limit(tup[RSV_START])} {tup[RSV_PLACE]} {tup[RSV_IDWR]}"
         for tup in reserveds
     ]
     result.sort()
-    client.chat_postMessage(channel=channel_id, text="\n".join(result))
+    slack_bot.post_message("\n".join(result))
 
 
-def handle_request_cancel(event, slack_id, channel_id):
-    client.chat_postMessage(
-        channel=channel_id,
-        text="予約済みリストを取得します。",
-    )
+def handle_request_cancel(slack_bot: SlackBot):
+    slack_bot.post_message("予約済みリストを取得します。")
     with sql.MeshiReserveDB() as db:
         reserveds = db.select_all_reserved_data()
     if not reserveds:
-        client.chat_postMessage(
-            channel=channel_id,
-            text="予約済みリストは空です。refresh コマンドで現在の予約状況を取得できます。",
-        )
+        slack_bot.post_message("予約済みリストは空です。refresh コマンドで現在の予約状況を取得できます。")
         return
 
     # この関数が呼び出されるまでに例外は省かれているはず
-    request = "_" + re.search(r"[a-f0-9]{4}", event["text"])[0]
+    request = "_" + re.search(r"[a-f0-9]{4}", slack_bot.text())[0]
     for reserve in reserveds:
         if request in reserve[RSV_IDWR]:
-            client.chat_postMessage(
-                channel=channel_id,
-                text="一致する予約を発見しました。",
-            )
+            slack_bot.post_message("一致する予約を発見しました。")
             if reserve[RSV_START] + RESERVE_LIMIT < int(time.time()):
-                client.chat_postMessage(
-                    channel=channel_id,
-                    text="予約時刻を過ぎているため、キャンセルできません。リストから削除します。",
-                )
+                slack_bot.post_message("予約時刻を過ぎているため、キャンセルできません。リストから削除します。")
                 with sql.MeshiReserveDB() as db:
                     db.delete_reserved_where_reserved_id_with_rand(reserve[RSV_IDWR])
-                client.chat_postMessage(
-                    channel=channel_id,
-                    text="削除しました。",
-                )
+                slack_bot.post_message("削除しました。")
                 return
-            send_reserved_date(channel_id, [reserve])
-            client.chat_postMessage(
-                channel=channel_id,
-                text="キャンセルを実行します。",
-            )
+            send_reserved_date(slack_bot, [reserve])
+            slack_bot.post_message("キャンセルを実行します。")
             with meshidatsu.WebDriverWithDB() as handler:
                 handler.cancel(reserve[RSV_ID])
                 new_reserveds = handler.retr_reserved_data_from_account()
                 for res in new_reserveds:
                     if res[RSV_ID] == reserve[RSV_ID]:
-                        client.chat_postMessage(
-                            channel=channel_id,
-                            text="キャンセルに失敗しました。再度実行してみてください。",
-                        )
+                        slack_bot.post_message("キャンセルに失敗しました。再度実行してみてください。")
                         return
-                client.chat_postMessage(
-                    channel=channel_id,
-                    text="キャンセルに成功しました。予約済みリストから削除します。",
-                )
+                slack_bot.post_message("キャンセルに成功しました。予約済みリストから削除します。")
                 handler.delete_reserved_where_reserved_id_with_rand(reserve[RSV_IDWR])
             return
 
-    client.chat_postMessage(
-        channel=channel_id,
-        text="一致する予約が見つかりませんでした。showr で現在の予約済みリストを確認できます。",
-    )
+    slack_bot.post_message("一致する予約が見つかりませんでした。showr で現在の予約済みリストを確認できます。")
 
 
 # アカウントが 1 つであることが前提となっている
-def handle_request_validate(event, slack_id, channel_id):
-    client.chat_postMessage(
-        channel=channel_id,
-        text="予約済みリストを検証します。",
-    )
+def handle_request_validate(slack_bot: SlackBot):
+    slack_bot.post_message("予約済みリストを検証します。")
     with meshidatsu.WebDriverWithDB() as handler:
         cur_reserved = handler.retr_reserved_data_from_account()
         db_reserved = handler.select_all_reserved_data()
@@ -445,28 +367,24 @@ def handle_request_validate(event, slack_id, channel_id):
                 not_found_idwithrand.append(db[RSV_IDWR])
 
         if not not_found:
-            client.chat_postMessage(
-                channel=channel_id,
-                text="予約済みリストは、全て有効であることを確認しました。",
-            )
+            slack_bot.post_message("予約済みリストは、全て有効であることを確認しました。")
             return
 
-        client.chat_postMessage(
-            channel=channel_id,
-            text="予約済みリストに無効な予約が含まれていました。",
-        )
-        send_reserved_date(channel_id, not_found)
-        client.chat_postMessage(
-            channel=channel_id,
-            text="削除を実行します。",
-        )
+        slack_bot.post_message("予約済みリストに無効な予約が含まれていました。")
+        send_reserved_date(slack_bot, not_found)
+        slack_bot.post_message("削除を実行します。")
         print(not_found_idwithrand)
         for idwr in not_found_idwithrand:
             handler.delete_reserved_where_reserved_id_with_rand(idwr)
-        client.chat_postMessage(
-            channel=channel_id,
-            text="削除が完了しました。",
-        )
+        slack_bot.post_message("削除が完了しました。")
+
+
+def handle_request_status(slack_bot: SlackBot):
+    slack_bot.post_message("現在の予約状況を取得します。")
+    with myfirefox.MeshiDatsuDriver() as driver:
+        driver.count_more()
+        result = driver.retr_current_reserve_status()
+    slack_bot.post_message(result)
 
 
 @app.route("/slack/events", methods=["POST"])
@@ -493,9 +411,9 @@ def slack_event():
 
     # ユーザからのメッセージのとき、処理を行う
     if event.get("type") == "message":
-        slack_bot = SlackBot(token, event["channel"])
+        slack_bot = SlackBot(TOKEN, event)
         try:
-            slack_bot.handle_message(event)
+            slack_bot.handle_message()
         except Exception as e:
             slack_bot.post_error_message(e)
 
@@ -517,6 +435,7 @@ if __name__ == "__main__":
         (handle_request_showr, r"^(S|s)howr *$"),
         (handle_request_cancel, r"^(C|c)ancel +[a-f0-9]{4} *$"),
         (handle_request_validate, r"^(V|v)alidate *$"),
+        (handle_request_status, r"^(S|s)tatus *$"),
     ]
 
     # 上記正規表現パターンを事前コンパイル

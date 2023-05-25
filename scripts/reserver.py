@@ -48,5 +48,4 @@ import code
 
 with MeshiDatsuDriver() as driver:
     with MeshiReserveDB() as db:
-        driver.login()
         code.InteractiveConsole(globals()).interact()
